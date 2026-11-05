@@ -169,10 +169,10 @@ int connect_to_server(
         socket_path.c_str(),
         socket_path.size() + 1);
 
-    // leave time for process startup and autograder overhead
+    // keep the connection deadline below two seconds
     const auto deadline =
         std::chrono::steady_clock::now() +
-        std::chrono::milliseconds(1500);
+        std::chrono::milliseconds(1200);
 
     while (true) {
         if (::connect(
@@ -205,8 +205,7 @@ int connect_to_server(
                 deadline - now);
 
         const auto pause =
-            remaining <
-                    std::chrono::milliseconds(25)
+            remaining < std::chrono::milliseconds(25)
                 ? remaining
                 : std::chrono::milliseconds(25);
 
@@ -261,28 +260,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    char* resolved =
-        ::realpath(file_path.c_str(), nullptr);
-
-    if (resolved == nullptr) {
-        std::cerr
-            << "cannot resolve file path: "
-            << std::strerror(errno)
-            << '\n';
-
-        return 1;
-    }
-
-    const std::string absolute_path(resolved);
-    std::free(resolved);
-
-    if (absolute_path.size() >
-        std::numeric_limits<std::uint32_t>::max()) {
-
-        std::cerr << "file path is too long\n";
-        return 1;
-    }
-
+    // connect first so an unreachable app returns exit code 2
     const int fd =
         connect_to_server(socket_path);
 
@@ -298,7 +276,33 @@ int main(int argc, char* argv[]) {
         return 2;
     }
 
-    // request: length and utf-8 pathname
+    // resolve the document only after connecting
+    char* resolved =
+        ::realpath(file_path.c_str(), nullptr);
+
+    if (resolved == nullptr) {
+        std::cerr
+            << "cannot resolve file path: "
+            << std::strerror(errno)
+            << '\n';
+
+        ::close(fd);
+        return 1;
+    }
+
+    const std::string absolute_path(resolved);
+    std::free(resolved);
+
+    if (absolute_path.size() >
+        std::numeric_limits<std::uint32_t>::max()) {
+
+        std::cerr << "file path is too long\n";
+
+        ::close(fd);
+        return 1;
+    }
+
+    // request: four-byte length followed by utf-8 pathname
     unsigned char header[4];
 
     encode_length(
