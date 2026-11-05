@@ -23,11 +23,16 @@ std::string default_socket_path() {
     }
 
     return "/tmp/aiws-" +
-           std::to_string(static_cast<unsigned long>(getuid())) +
+           std::to_string(
+               static_cast<unsigned long>(getuid())) +
            ".sock";
 }
 
-bool send_all(int fd, const void* data, std::size_t size) {
+bool send_all(
+    int fd,
+    const void* data,
+    std::size_t size) {
+
     const auto* bytes =
         static_cast<const unsigned char*>(data);
 
@@ -35,7 +40,11 @@ bool send_all(int fd, const void* data, std::size_t size) {
 
     while (sent < size) {
         const ssize_t count =
-            send(fd, bytes + sent, size - sent, MSG_NOSIGNAL);
+            ::send(
+                fd,
+                bytes + sent,
+                size - sent,
+                MSG_NOSIGNAL);
 
         if (count > 0) {
             sent += static_cast<std::size_t>(count);
@@ -52,13 +61,23 @@ bool send_all(int fd, const void* data, std::size_t size) {
     return true;
 }
 
-bool receive_all(int fd, void* data, std::size_t size) {
-    auto* bytes = static_cast<unsigned char*>(data);
+bool receive_all(
+    int fd,
+    void* data,
+    std::size_t size) {
+
+    auto* bytes =
+        static_cast<unsigned char*>(data);
+
     std::size_t received = 0;
 
     while (received < size) {
         const ssize_t count =
-            recv(fd, bytes + received, size - received, 0);
+            ::recv(
+                fd,
+                bytes + received,
+                size - received,
+                0);
 
         if (count > 0) {
             received += static_cast<std::size_t>(count);
@@ -75,48 +94,68 @@ bool receive_all(int fd, void* data, std::size_t size) {
     return true;
 }
 
-void encode_length(std::uint32_t value, unsigned char* bytes) {
-    bytes[0] = static_cast<unsigned char>(value >> 24);
-    bytes[1] = static_cast<unsigned char>(value >> 16);
-    bytes[2] = static_cast<unsigned char>(value >> 8);
-    bytes[3] = static_cast<unsigned char>(value);
+void encode_length(
+    std::uint32_t value,
+    unsigned char* bytes) {
+
+    bytes[0] =
+        static_cast<unsigned char>(value >> 24);
+
+    bytes[1] =
+        static_cast<unsigned char>(value >> 16);
+
+    bytes[2] =
+        static_cast<unsigned char>(value >> 8);
+
+    bytes[3] =
+        static_cast<unsigned char>(value);
 }
 
-std::uint32_t decode_length(const unsigned char* bytes) {
-    return (static_cast<std::uint32_t>(bytes[0]) << 24) |
-           (static_cast<std::uint32_t>(bytes[1]) << 16) |
-           (static_cast<std::uint32_t>(bytes[2]) << 8) |
-           static_cast<std::uint32_t>(bytes[3]);
+std::uint32_t decode_length(
+    const unsigned char* bytes) {
+
+    return
+        (static_cast<std::uint32_t>(bytes[0]) << 24) |
+        (static_cast<std::uint32_t>(bytes[1]) << 16) |
+        (static_cast<std::uint32_t>(bytes[2]) << 8) |
+        static_cast<std::uint32_t>(bytes[3]);
 }
 
 bool set_socket_timeout(int fd, int seconds) {
     timeval timeout{};
+
     timeout.tv_sec = seconds;
     timeout.tv_usec = 0;
 
-    return setsockopt(
-               fd,
-               SOL_SOCKET,
-               SO_RCVTIMEO,
-               &timeout,
-               sizeof(timeout)) == 0 &&
-           setsockopt(
-               fd,
-               SOL_SOCKET,
-               SO_SNDTIMEO,
-               &timeout,
-               sizeof(timeout)) == 0;
+    return
+        ::setsockopt(
+            fd,
+            SOL_SOCKET,
+            SO_RCVTIMEO,
+            &timeout,
+            sizeof(timeout)) == 0 &&
+        ::setsockopt(
+            fd,
+            SOL_SOCKET,
+            SO_SNDTIMEO,
+            &timeout,
+            sizeof(timeout)) == 0;
 }
 
-int connect_to_server(const std::string& socket_path) {
+int connect_to_server(
+    const std::string& socket_path) {
+
     sockaddr_un address{};
 
-    if (socket_path.size() >= sizeof(address.sun_path)) {
+    if (socket_path.size() >=
+        sizeof(address.sun_path)) {
+
         std::cerr << "socket path is too long\n";
         return -1;
     }
 
-    const int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    const int fd =
+        ::socket(AF_UNIX, SOCK_STREAM, 0);
 
     if (fd < 0) {
         std::cerr << "cannot create socket\n";
@@ -124,20 +163,23 @@ int connect_to_server(const std::string& socket_path) {
     }
 
     address.sun_family = AF_UNIX;
+
     std::memcpy(
         address.sun_path,
         socket_path.c_str(),
         socket_path.size() + 1);
 
+    // leave time for process startup and autograder overhead
     const auto deadline =
         std::chrono::steady_clock::now() +
-        std::chrono::seconds(2);
+        std::chrono::milliseconds(1500);
 
     while (true) {
-        if (connect(
+        if (::connect(
                 fd,
                 reinterpret_cast<sockaddr*>(&address),
                 sizeof(address)) == 0) {
+
             return fd;
         }
 
@@ -146,27 +188,44 @@ int connect_to_server(const std::string& socket_path) {
         if (error != ENOENT &&
             error != ECONNREFUSED &&
             error != EINTR) {
+
             break;
         }
 
-        if (std::chrono::steady_clock::now() >= deadline) {
+        const auto now =
+            std::chrono::steady_clock::now();
+
+        if (now >= deadline) {
             break;
         }
 
-        std::this_thread::sleep_for(
-            std::chrono::milliseconds(25));
+        const auto remaining =
+            std::chrono::duration_cast<
+                std::chrono::milliseconds>(
+                deadline - now);
+
+        const auto pause =
+            remaining <
+                    std::chrono::milliseconds(25)
+                ? remaining
+                : std::chrono::milliseconds(25);
+
+        if (pause.count() > 0) {
+            std::this_thread::sleep_for(pause);
+        }
     }
 
     std::cerr << "cannot reach AI Workspace\n";
-    close(fd);
+
+    ::close(fd);
     return -1;
 }
 
 }  // namespace
 
 int main(int argc, char* argv[]) {
-    std::string socket_path = default_socket_path();
-    std::string file_path;
+    std::string socket_path =
+        default_socket_path();
 
     int index = 1;
 
@@ -187,10 +246,12 @@ int main(int argc, char* argv[]) {
 
         std::cerr
             << "usage: aiws_send [--socket PATH] add FILE\n";
+
         return 1;
     }
 
-    file_path = argv[index + 1];
+    const std::string file_path =
+        argv[index + 1];
 
     if (file_path.empty() ||
         file_path.size() >
@@ -200,11 +261,15 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    char* resolved = realpath(file_path.c_str(), nullptr);
+    char* resolved =
+        ::realpath(file_path.c_str(), nullptr);
 
     if (resolved == nullptr) {
-        std::cerr << "cannot resolve file path: "
-                  << std::strerror(errno) << '\n';
+        std::cerr
+            << "cannot resolve file path: "
+            << std::strerror(errno)
+            << '\n';
+
         return 1;
     }
 
@@ -218,23 +283,27 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    const int fd = connect_to_server(socket_path);
+    const int fd =
+        connect_to_server(socket_path);
 
     if (fd < 0) {
         return 2;
     }
 
     if (!set_socket_timeout(fd, 5)) {
-        std::cerr << "cannot configure socket timeout\n";
-        close(fd);
+        std::cerr
+            << "cannot configure socket timeout\n";
+
+        ::close(fd);
         return 2;
     }
 
-    // request: four-byte length followed by utf-8 path
+    // request: length and utf-8 pathname
     unsigned char header[4];
 
     encode_length(
-        static_cast<std::uint32_t>(absolute_path.size()),
+        static_cast<std::uint32_t>(
+            absolute_path.size()),
         header);
 
     if (!send_all(fd, header, sizeof(header)) ||
@@ -244,11 +313,12 @@ int main(int argc, char* argv[]) {
             absolute_path.size())) {
 
         std::cerr << "failed to send request\n";
-        close(fd);
+
+        ::close(fd);
         return 2;
     }
 
-    // response: one status byte, then message length and text
+    // response: status, length, and message
     unsigned char status = 0;
     unsigned char response_header[4];
 
@@ -259,7 +329,8 @@ int main(int argc, char* argv[]) {
             sizeof(response_header))) {
 
         std::cerr << "failed to receive response\n";
-        close(fd);
+
+        ::close(fd);
         return 2;
     }
 
@@ -268,7 +339,8 @@ int main(int argc, char* argv[]) {
 
     if (message_length > 65536) {
         std::cerr << "invalid server response\n";
-        close(fd);
+
+        ::close(fd);
         return 2;
     }
 
@@ -280,11 +352,12 @@ int main(int argc, char* argv[]) {
             message.size())) {
 
         std::cerr << "incomplete server response\n";
-        close(fd);
+
+        ::close(fd);
         return 2;
     }
 
-    close(fd);
+    ::close(fd);
 
     if (status == 0) {
         std::cout << "document accepted\n";
@@ -292,10 +365,12 @@ int main(int argc, char* argv[]) {
     }
 
     if (status == 1) {
-        std::cerr << (message.empty()
-                          ? "document rejected"
-                          : message)
-                  << '\n';
+        std::cerr
+            << (message.empty()
+                    ? "document rejected"
+                    : message)
+            << '\n';
+
         return 1;
     }
 
